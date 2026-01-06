@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"strconv"
 	_ "github.com/lib/pq"
 	"github.com/google/uuid"
 	"github.com/richardw55555/aggreGATOR/internal/database"
@@ -11,8 +12,8 @@ import (
 )
 
 func handlerLogin(s *state, cmd command) error {
-	if len(cmd.Args) == 0 {
-		return fmt.Errorf("no arguments provided")
+	if len(cmd.Args) != 1 {
+		return fmt.Errorf("usage: %s <name>", cmd.Name)
 	}
 
 	name := cmd.Args[0]
@@ -30,8 +31,8 @@ func handlerLogin(s *state, cmd command) error {
 }
 
 func handlerRegister(s *state, cmd command) error {
-	if len(cmd.Args) == 0 {
-		return fmt.Errorf("no arguments provided")
+	if len(cmd.Args) != 1 {
+		return fmt.Errorf("usage: %v <name>", cmd.Name)
 	}
 
 	name := cmd.Args[0]
@@ -82,19 +83,32 @@ func handlerListUsers(s *state, cmd command) error {
 }
 
 func handlerAgg(s *state, cmd command) error {
-	feed, err := fetchFeed(context.Background(), "https://www.wagslane.dev/index.xml")
+	if len(cmd.Args) < 1 || len(cmd.Args) > 2 {
+		return fmt.Errorf("usage: %v <time_between_reqs>", cmd.Name)
+	}
+	
+	time_between_reqs := cmd.Args[0]
+	
+	timeBetweenRequests, err := time.ParseDuration(time_between_reqs)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Feed: %+v\n", feed)
+	fmt.Printf("Collecting feeds every %v\n", timeBetweenRequests)
+	fmt.Println("=====================================")
+	scrapeFeeds(s)
+	fmt.Println("=====================================")
 
-	return nil
+	ticker := time.NewTicker(timeBetweenRequests)
+	for ; ; <-ticker.C {
+		scrapeFeeds(s)
+		fmt.Println("=====================================")
+	}
 }
 
 func handlerAddFeed(s *state, cmd command, user database.User) error {
-	if len(cmd.Args) <= 1 {
-		return fmt.Errorf("not enough arguments provided")
+	if len(cmd.Args) != 2 {
+		return fmt.Errorf("usage: %s <name> <url>", cmd.Name)
 	}
 
 	name := cmd.Args[0]
@@ -129,7 +143,7 @@ func handlerAddFeed(s *state, cmd command, user database.User) error {
 	_, err = s.db.CreateFeedFollow(
 		context.Background(),
 		database.CreateFeedFollowParams{
-			ID: uuid.New(),
+			ID:        uuid.New(),
 			CreatedAt: time.Now().UTC(),
 			UpdatedAt: time.Now().UTC(),
 			UserID:    user.ID,
@@ -141,8 +155,6 @@ func handlerAddFeed(s *state, cmd command, user database.User) error {
 	}
 
 	fmt.Println("Feed followed successfully:")
-	fmt.Printf("UserName: %s\n", user.Name)
-	fmt.Printf("FeedName: %s\n", feed.Name)
 	fmt.Println("=====================================")
 
 	return nil
@@ -177,8 +189,8 @@ func handlerListFeeds(s *state, cmd command) error {
 }
 
 func handlerFollow(s *state, cmd command, user database.User) error {
-	if len(cmd.Args) == 0 {
-		return fmt.Errorf("not enough arguments provided")
+	if len(cmd.Args) != 1 {
+		return fmt.Errorf("usage: %s <feed_url>", cmd.Name)
 	}
 	
 	url := cmd.Args[0]
@@ -191,7 +203,7 @@ func handlerFollow(s *state, cmd command, user database.User) error {
 	_, err = s.db.CreateFeedFollow(
 		context.Background(),
 		database.CreateFeedFollowParams{
-			ID: uuid.New(),
+			ID:        uuid.New(),
 			CreatedAt: time.Now().UTC(),
 			UpdatedAt: time.Now().UTC(),
 			UserID:    user.ID,
@@ -222,8 +234,8 @@ func handlerFollowing(s *state, cmd command, user database.User) error {
 }
 
 func handlerUnfollow(s *state, cmd command, user database.User) error {
-	if len(cmd.Args) == 0 {
-		return fmt.Errorf("not enough arguments provided")
+	if len(cmd.Args) != 1 {
+		return fmt.Errorf("usage: %s <feed_url>", cmd.Name)
 	}
 	
 	url := cmd.Args[0]
@@ -240,4 +252,45 @@ func handlerUnfollow(s *state, cmd command, user database.User) error {
 			FeedID: feed.ID,
 		},
 	)
+}
+
+func handlerBrowse(s *state, cmd command, user database.User) error {
+	var limit int32
+	if len(cmd.Args) == 0 {
+		limit = int32(2)
+	} else {
+		num, err := strconv.Atoi(cmd.Args[0])
+		if err != nil {
+			return fmt.Errorf("usage: %s [limit]", cmd.Name)
+		}
+
+		limit = int32(num)
+	}
+
+	posts, err := s.db.GetPostsForUser(
+		context.Background(),
+		database.GetPostsForUserParams{
+			ID:    user.ID,
+			Limit: limit,
+		},
+	)
+
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("=====================================")
+	for _, post := range posts {
+		fmt.Printf("ID:          %s\n", post.ID)
+		fmt.Printf("CreatedAt:   %v\n", post.CreatedAt)
+		fmt.Printf("UpdatedAt:   %v\n", post.UpdatedAt)
+		fmt.Printf("Title:       %s\n", post.Title)
+		fmt.Printf("Url:         %s\n", post.Url)
+		fmt.Printf("Description: %s\n", post.Description)
+		fmt.Printf("PublishedAt: %v\n", post.PublishedAt)
+		fmt.Printf("FeedID:      %s\n", post.FeedID)
+		fmt.Println("=====================================")
+	}
+
+	return nil
 }
